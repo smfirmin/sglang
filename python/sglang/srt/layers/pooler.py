@@ -16,6 +16,7 @@ from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 class PoolingType(IntEnum):
     LAST = 0
     CLS = 1
+    MEAN = 2
 
 
 @dataclass
@@ -32,7 +33,7 @@ class Pooler(nn.Module):
     2. Normalizes output if specified.
     3. Returns structured results as `PoolerOutput`.
     Attributes:
-        pooling_type: The type of pooling to use (LAST, AVERAGE, MAX).
+        pooling_type: The type of pooling to use (LAST, CLS, MEAN).
         normalize: Whether to normalize the pooled data.
     """
 
@@ -53,6 +54,20 @@ class Pooler(nn.Module):
             first_token_flat_indices = torch.zeros_like(prompt_lens)
             first_token_flat_indices[1:] += torch.cumsum(prompt_lens, dim=0)[:-1]
             pooled_data = hidden_states[first_token_flat_indices]
+        elif self.pooling_type == PoolingType.MEAN:
+            pooled_data_lst = []
+            offset = 0
+            prompt_lens = getattr(forward_batch, "extend_seq_lens_cpu", None)
+            if prompt_lens is None:
+                prompt_lens = forward_batch.extend_seq_lens.tolist()
+            elif torch.is_tensor(prompt_lens):
+                prompt_lens = prompt_lens.tolist()
+            for prompt_len in prompt_lens:
+                pooled_data_lst.append(
+                    hidden_states[offset : offset + prompt_len].mean(dim=0)
+                )
+                offset += prompt_len
+            pooled_data = torch.stack(pooled_data_lst)
         else:
             raise ValueError(f"Invalid pooling type: {self.pooling_type}")
 
